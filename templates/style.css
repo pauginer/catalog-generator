@@ -1,0 +1,6 @@
+/* Your own styles. They are added after the built-in stylesheet,
+   so anything here overrides the defaults. For example:
+
+:root { --accent: #b3261e; }
+.catalog-list { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+*/
