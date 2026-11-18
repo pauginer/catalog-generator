@@ -706,6 +706,9 @@ def nav_html(cfg, root):
     return '<nav class="site-nav">%s</nav>' % "".join(links) if links else ""
 
 
+URL_ONLY_RE = re.compile(r"^\s*(?:https?://|mailto:|www\.)\S*\s*$", re.I)
+
+
 def number_or_none(v):
     m = re.search(r"-?\d+(?:[.,]\d+)?", v or "")
     return float(m.group(0).replace(",", ".")) if m else None
@@ -726,8 +729,14 @@ def build(config_path, out_override=None, source_override=None, force=False):
 
     title_col = resolve_column(cfg.get("title_column") or "A", headers, "title_column")
     id_col = resolve_column(cfg.get("id_column"), headers, "id_column") if cfg.get("id_column") else None
+    explicit_search = bool(cfg.get("search_columns"))
     search_cols = [resolve_column(c, headers, "search column") for c in cfg.get("search_columns") or []] \
         or list(range(len(headers)))
+
+    def searchable(value):
+        # By default, cells holding only a link (web pages, images) are not searched:
+        # their URLs ("https://...ebooks/...") would match common words in every item.
+        return explicit_search or not URL_ONLY_RE.match(value)
     filters = []
     for f in cfg.get("filters") or []:
         f = {"column": f} if isinstance(f, str) else dict(f)
@@ -824,11 +833,11 @@ def build(config_path, out_override=None, source_override=None, force=False):
             item["n"], render_markdown_template(templates["card.md"], ctx)))
         v = item["values"]
         index_data.append({
-            "s": normalize_text(" ".join(v[i] for i in search_cols)),
+            "v": [v[i] if searchable(v[i]) else "" for i in search_cols],
             "f": [split_values(v[f["idx"]], sep if f["multiple"] else "") for f in filters],
             "o": [number_or_none(v[s["idx"]]) if s["numeric"] else normalize_text(v[s["idx"]]) for s in sorts],
         })
-    widget = catalog_widget(items, filters, sorts, cards, index_data, sep)
+    widget = catalog_widget(items, filters, sorts, cards, index_data, [headers[i] for i in search_cols])
     ctx = Context(headers, [], dict(globals_, root="", home="index.html", catalog=Raw("\n<!--catalog-widget-->\n")), sep, warned)
     body = render_markdown_template(templates["index.md"], ctx)
     if "<!--catalog-widget-->" in body:
@@ -886,7 +895,7 @@ def pager_html(prev_item, next_item, href):
     return '<nav class="pager">%s</nav>' % "".join(parts)
 
 
-def catalog_widget(items, filters, sorts, cards, index_data, sep):
+def catalog_widget(items, filters, sorts, cards, index_data, search_labels):
     controls = ['<input type="search" class="catalog-search" placeholder="Search %d items..." '
                 'aria-label="Search" data-search>' % len(items)]
     for fi, f in enumerate(filters):
@@ -906,14 +915,14 @@ def catalog_widget(items, filters, sorts, cards, index_data, sep):
     data_json = json.dumps(index_data, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
     sort_json = json.dumps([{"numeric": s["numeric"], "desc": s["desc"]} for s in sorts])
     return (
-        '<section class="catalog" data-catalog data-sorts="%s">\n'
+        '<section class="catalog" data-catalog data-sorts="%s" data-labels="%s">\n'
         '<div class="catalog-controls">%s</div>\n'
         '<div class="catalog-status"><span data-count>%d items</span>'
         '<button type="button" class="catalog-reset" data-reset hidden>Clear filters</button></div>\n'
         '<div class="catalog-list" data-list>\n%s\n</div>\n'
         '<p class="catalog-empty" data-empty hidden>No items match your search.</p>\n'
         '<script type="application/json" data-catalog-index>%s</script>\n'
-        '</section>' % (attr(sort_json), "".join(controls), len(items), "\n".join(cards), data_json)
+        '</section>' % (attr(sort_json), attr(json.dumps(search_labels, ensure_ascii=False)), "".join(controls), len(items), "\n".join(cards), data_json)
     )
 
 
@@ -1047,13 +1056,111 @@ main.wrap { padding-bottom: 3rem; min-height: 70vh; }
 .pager a span { font-size: .8rem; color: var(--muted); }
 .pager .next { text-align: right; margin-left: auto; }
 li.task { list-style: none; }
+[hidden] { display: none !important; }
+.catalog-match { margin: .6rem 0 0; padding-top: .5rem; border-top: 1px dashed var(--line);
+                 font-size: .85rem; color: var(--muted); display: flex; flex-direction: column; gap: .15rem; }
+.catalog-match b { font-weight: 600; }
+mark.catalog-hit { background: #ffe58a; color: inherit; border-radius: 3px; padding: 0 1px; }
+@media (prefers-color-scheme: dark) { mark.catalog-hit { background: #6b5a12; } }
 """
 
 DEFAULT_JS = r"""(function () {
   "use strict";
   function norm(s) { return (s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase(); }
+  // Remove highlights added by mark().
+  function unmark(card) {
+    var note = card.querySelector(".catalog-match");
+    if (note) note.parentNode.removeChild(note);
+    var marks = card.querySelectorAll("mark.catalog-hit");
+    if (!marks.length) return;
+    Array.prototype.forEach.call(marks, function (m) {
+      var parent = m.parentNode;
+      parent.replaceChild(document.createTextNode(m.textContent), m);
+      parent.normalize();
+    });
+  }
+  // Highlight every occurrence of the search terms in a card's text,
+  // ignoring case and accents (so "miserables" highlights "Misérables").
+  function mark(card, terms) {
+    var walker = document.createTreeWalker(card, NodeFilter.SHOW_TEXT, null);
+    var nodes = [], node;
+    while ((node = walker.nextNode())) {
+      if (node.nodeValue.trim() && !node.parentNode.closest("script,style")) nodes.push(node);
+    }
+    nodes.forEach(function (textNode) {
+      var text = textNode.nodeValue, flat = "", map = [];
+      for (var i = 0; i < text.length; i++) {
+        var n = norm(text[i]);
+        for (var j = 0; j < n.length; j++) { flat += n[j]; map.push(i); }
+      }
+      var ranges = [];
+      terms.forEach(function (t) {
+        var at = flat.indexOf(t);
+        while (at !== -1) {
+          ranges.push([map[at], map[at + t.length - 1] + 1]);
+          at = flat.indexOf(t, at + t.length);
+        }
+      });
+      if (!ranges.length) return;
+      ranges.sort(function (a, b) { return a[0] - b[0]; });
+      var merged = [ranges[0]];
+      ranges.slice(1).forEach(function (r) {
+        var last = merged[merged.length - 1];
+        if (r[0] <= last[1]) last[1] = Math.max(last[1], r[1]); else merged.push(r);
+      });
+      var frag = document.createDocumentFragment(), pos = 0;
+      merged.forEach(function (r) {
+        if (r[0] > pos) frag.appendChild(document.createTextNode(text.slice(pos, r[0])));
+        var m = document.createElement("mark");
+        m.className = "catalog-hit";
+        m.textContent = text.slice(r[0], r[1]);
+        frag.appendChild(m);
+        pos = r[1];
+      });
+      if (pos < text.length) frag.appendChild(document.createTextNode(text.slice(pos)));
+      textNode.parentNode.replaceChild(frag, textNode);
+    });
+  }
+  // When a term matched only in fields the card does not show (e.g. Genre),
+  // add a small "Genre: Novel" line so it is clear why the item is listed.
+  function explain(card, d, terms) {
+    var visible = norm(card.textContent);
+    var missing = terms.filter(function (t) { return visible.indexOf(t) === -1; });
+    if (!missing.length) return;
+    var labels = card.closest("[data-catalog]")._labels;
+    var note = document.createElement("p");
+    note.className = "catalog-match";
+    var shownFields = 0;
+    d.n.forEach(function (value, k) {
+      if (shownFields >= 3 || !value) return;
+      if (!missing.some(function (t) { return value.indexOf(t) !== -1; })) return;
+      var raw = d.v[k], text = raw.length > 120 ? snippet(raw, value, missing) : raw;
+      var row = document.createElement("span");
+      var b = document.createElement("b");
+      b.textContent = labels[k] + ": ";
+      row.appendChild(b);
+      row.appendChild(document.createTextNode(text));
+      note.appendChild(row);
+      shownFields++;
+    });
+    if (!shownFields) return;
+    card.appendChild(note);
+    mark(note, missing);
+  }
+  // Cut a long value down to the part around the first match.
+  function snippet(raw, normalized, terms) {
+    var at = Math.min.apply(null, terms.map(function (t) {
+      var i = normalized.indexOf(t); return i === -1 ? Infinity : i; }));
+    var start = Math.max(0, at - 50);
+    return (start > 0 ? "\u2026" : "") + raw.slice(start, start + 120) + (start + 120 < raw.length ? "\u2026" : "");
+  }
   function initCatalog(root) {
     var data = JSON.parse(root.querySelector("script[data-catalog-index]").textContent);
+    root._labels = JSON.parse(root.getAttribute("data-labels") || "[]");
+    data.forEach(function (d) {
+      d.n = d.v.map(norm);
+      d.s = d.n.join(" \u0001 ");
+    });
     var sorts = JSON.parse(root.getAttribute("data-sorts") || "[]");
     var list = root.querySelector("[data-list]");
     var cards = Array.prototype.slice.call(list.children);
@@ -1078,7 +1185,14 @@ DEFAULT_JS = r"""(function () {
         var ok = terms.every(function (t) { return d.s.indexOf(t) !== -1; }) &&
           active.every(function (s) { return d.f[+s.getAttribute("data-filter")].indexOf(s.value) !== -1; });
         card.hidden = !ok;
-        if (ok) shown++;
+        unmark(card);
+        if (ok) {
+          shown++;
+          if (terms.length && shown <= 500) {
+            mark(card, terms);
+            explain(card, d, terms);
+          }
+        }
       });
       var order = original.slice();
       var si = sortSel ? sortSel.value : "";

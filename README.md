@@ -135,7 +135,7 @@ Example `templates/card.md`:
 | `title_column` | `"A"` | Column used for `$title`, page titles and file names |
 | `id_column` | – | Column with stable unique IDs for page file names (default: derived from the title) |
 | `list_separator` | `","` | Separator for multi-value cells (`#each`, multi-value filters) |
-| `search_columns` | all | Columns the search box looks in, e.g. `["A", "Author"]` |
+| `search_columns` | all except link-only cells | Columns the search box looks in, e.g. `["A", "Author"]` |
 | `filters` | `[]` | Drop-down filters: `{"column": "D", "label": "Genre", "multiple": true}`. `multiple` splits the cell with `list_separator`. |
 | `sort` | `[]` | Sort options: `{"column": "C", "label": "Newest", "numeric": true, "descending": true}` |
 | `nav` | `[]` | Header links: `{"label": "About", "url": "about.html"}` |
@@ -146,7 +146,11 @@ Example `templates/card.md`:
 
 Columns can be referenced by letter (`"D"`) or by header (`"Genre"`) everywhere.
 
-Search ignores case and accents and matches every word typed. The current search, filters and sort are kept in the URL,
+Search filters the list as you type. It ignores case and accents, an item must contain every word typed, and
+matches are highlighted on the cards. When a word matches a column the card doesn't show (say, Genre), the card gets
+a short "Genre: Novel" line explaining the match. Cells that contain only a link (web pages, images) are not
+searched, so a word like "book" doesn't match every item through its URL; list a column in `search_columns` to
+search it anyway. The current search, filters and sort are kept in the URL,
 so a filtered view can be bookmarked or shared.
 
 ## Publishing on GitHub Pages
