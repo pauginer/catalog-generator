@@ -146,8 +146,8 @@ Example `templates/card.md`:
 Columns can be referenced by letter (`"D"`) or by header (`"Genre"`) everywhere.
 
 Each filter appears as a row of chips, one per value, most common first, with the number of matching items.
-Tap a chip to select it and tap again to clear it. Several chips in the same row show items matching any of them;
-chips in different rows narrow the results together. Counts update as you search and filter, and chips that would
+Tap a chip to show only items with that value; one chip per row can be selected at a time, and tapping
+**All** removes that filter. With several rows, the selections narrow the results together. Counts update as you search and filter, and chips that would
 give no results are greyed out. Long rows show the first 12 chips and a "+N more" chip.
 
 Search filters the list as you type. It ignores case and accents, an item must contain every word typed, and

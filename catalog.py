@@ -911,8 +911,7 @@ def catalog_widget(items, filters, cards, index_data, search_labels, visible_chi
     return (
         '<section class="catalog" data-catalog data-labels="%s">\n'
         '<div class="catalog-controls">%s</div>\n'
-        '<div class="catalog-status"><span data-count>%d items</span>'
-        '<button type="button" class="catalog-reset" data-reset hidden>Clear filters</button></div>\n'
+        '<div class="catalog-status"><span data-count>%d items</span></div>\n'
         '<div class="catalog-list" data-list>\n%s\n</div>\n'
         '<p class="catalog-empty" data-empty hidden>No items match your search.</p>\n'
         '<script type="application/json" data-catalog-index>%s</script>\n'
@@ -1032,7 +1031,6 @@ main.wrap { padding-bottom: 3rem; min-height: 70vh; }
 .chip:disabled:hover { border-color: var(--line); }
 .chip-more { border-style: dashed; color: var(--muted); }
 .catalog-status { display: flex; gap: 1rem; align-items: center; color: var(--muted); font-size: .9rem; margin-bottom: 1rem; }
-.catalog-reset { font: inherit; font-size: .9rem; border: 0; background: none; color: var(--accent); cursor: pointer; padding: 0; }
 .catalog-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 1rem; }
 .catalog-empty { color: var(--muted); padding: 2rem 0; text-align: center; }
 .card { position: relative; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
@@ -1172,19 +1170,17 @@ DEFAULT_JS = r"""(function () {
     var filters = Array.prototype.slice.call(root.querySelectorAll("[data-filter]"));
     var countEl = root.querySelector("[data-count]");
     var emptyEl = root.querySelector("[data-empty]");
-    var resetEl = root.querySelector("[data-reset]");
     var params = new URLSearchParams(location.search);
     if (search && params.has("q")) search.value = params.get("q");
-    // Each filter is a group of chips; several chips in one group mean "any of these",
-    // and different groups must all match.
+    // Each filter is a group of chips with one choice at a time ("All" or one value);
+    // different groups must all match.
     filters.forEach(function (group) {
       group._index = +group.getAttribute("data-filter");
       group._chips = Array.prototype.slice.call(group.querySelectorAll("[data-value]"));
       group._all = group.querySelector("[data-all]");
-      group._more = group.querySelector("[data-more]");
-      var wanted = params.getAll(group.getAttribute("data-key"));
+      var wanted = params.get(group.getAttribute("data-key"));
       group._chips.forEach(function (chip) {
-        if (wanted.indexOf(chip.getAttribute("data-value")) !== -1) chip.setAttribute("aria-pressed", "true");
+        if (chip.getAttribute("data-value") === wanted) chip.setAttribute("aria-pressed", "true");
       });
     });
     function selected(group) {
@@ -1234,8 +1230,6 @@ DEFAULT_JS = r"""(function () {
       });
       countEl.textContent = shown === cards.length ? cards.length + " items" : shown + " of " + cards.length + " items";
       emptyEl.hidden = shown > 0;
-      var anyPick = picks.some(function (v) { return v.length; });
-      resetEl.hidden = !((search && search.value) || anyPick);
       var p = new URLSearchParams();
       if (search && search.value) p.set("q", search.value);
       filters.forEach(function (g, k) {
@@ -1245,9 +1239,6 @@ DEFAULT_JS = r"""(function () {
       history.replaceState(null, "", location.pathname + (qs ? "?" + qs : "") + location.hash);
     }
     if (search) search.addEventListener("input", apply);
-    function clearGroup(group) {
-      group._chips.forEach(function (c) { c.setAttribute("aria-pressed", "false"); });
-    }
     filters.forEach(function (group) {
       group.addEventListener("click", function (e) {
         var chip = e.target.closest("button");
@@ -1257,15 +1248,10 @@ DEFAULT_JS = r"""(function () {
           chip.hidden = true;
           return;
         }
-        if (chip.hasAttribute("data-all")) clearGroup(group);
-        else chip.setAttribute("aria-pressed", chip.getAttribute("aria-pressed") === "true" ? "false" : "true");
+        // Select the tapped chip and unselect the rest; "All" leaves every value unselected.
+        group._chips.forEach(function (c) { c.setAttribute("aria-pressed", c === chip ? "true" : "false"); });
         apply();
       });
-    });
-    resetEl.addEventListener("click", function () {
-      if (search) search.value = "";
-      filters.forEach(clearGroup);
-      apply();
     });
     apply();
   }
