@@ -2,7 +2,7 @@
 
 Turn a spreadsheet into a static, searchable catalog website: one row per item.
 
-- **Overview page** listing every item, with search, filters and sorting (works offline, no server needed).
+- **Overview page** listing every item, with search and tappable filter chips (works offline, no server needed).
 - **Detail page** for every item.
 - Pages are written in **Markdown** with simple template markup: `$A` is the value of column A for the current row.
 - Data comes from a **CSV file** or a **Google Sheet**.
@@ -43,7 +43,7 @@ python3 catalog.py init ../my-catalog
 ## Project layout
 
 ```
-catalog.json          settings (title, data source, filters, sorting...)
+catalog.json          settings (title, data source, filters...)
 data/items.csv        the spreadsheet: first row = column headers
 templates/
   index.md            overview page; {{catalog}} marks where the searchable list goes
@@ -136,8 +136,7 @@ Example `templates/card.md`:
 | `id_column` | – | Column with stable unique IDs for page file names (default: derived from the title) |
 | `list_separator` | `","` | Separator for multi-value cells (`#each`, multi-value filters) |
 | `search_columns` | all except link-only cells | Columns the search box looks in, e.g. `["A", "Author"]` |
-| `filters` | `[]` | Drop-down filters: `{"column": "D", "label": "Genre", "multiple": true}`. `multiple` splits the cell with `list_separator`. |
-| `sort` | `[]` | Sort options: `{"column": "C", "label": "Newest", "numeric": true, "descending": true}` |
+| `filters` | `[]` | Filter chips: `{"column": "D", "label": "Genre", "multiple": true}`. `multiple` splits the cell with `list_separator` (for tag-style cells). |
 | `nav` | `[]` | Header links: `{"label": "About", "url": "about.html"}` |
 | `footer` | `""` | Footer text (inline Markdown) |
 | `head` | `""` | Extra HTML for `<head>` (analytics, fonts...) |
@@ -146,11 +145,16 @@ Example `templates/card.md`:
 
 Columns can be referenced by letter (`"D"`) or by header (`"Genre"`) everywhere.
 
+Each filter appears as a row of chips, one per value, most common first, with the number of matching items.
+Tap a chip to select it and tap again to clear it. Several chips in the same row show items matching any of them;
+chips in different rows narrow the results together. Counts update as you search and filter, and chips that would
+give no results are greyed out. Long rows show the first 12 chips and a "+N more" chip.
+
 Search filters the list as you type. It ignores case and accents, an item must contain every word typed, and
 matches are highlighted on the cards. When a word matches a column the card doesn't show (say, Genre), the card gets
 a short "Genre: Novel" line explaining the match. Cells that contain only a link (web pages, images) are not
 searched, so a word like "book" doesn't match every item through its URL; list a column in `search_columns` to
-search it anyway. The current search, filters and sort are kept in the URL,
+search it anyway. The current search and selected chips are kept in the URL,
 so a filtered view can be bookmarked or shared.
 
 ## Publishing on GitHub Pages

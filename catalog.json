@@ -20,23 +20,6 @@
       "label": "Language"
     }
   ],
-  "sort": [
-    {
-      "column": "A",
-      "label": "Title (A-Z)"
-    },
-    {
-      "column": "C",
-      "label": "Oldest first",
-      "numeric": true
-    },
-    {
-      "column": "C",
-      "label": "Newest first",
-      "numeric": true,
-      "descending": true
-    }
-  ],
   "nav": [
     {
       "label": "About",

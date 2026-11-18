@@ -641,7 +641,6 @@ DEFAULT_CONFIG = {
     "list_separator": ",",
     "search_columns": [],
     "filters": [],
-    "sort": [],
     "nav": [],
     "footer": "",
     "head": "",
@@ -709,11 +708,6 @@ def nav_html(cfg, root):
 URL_ONLY_RE = re.compile(r"^\s*(?:https?://|mailto:|www\.)\S*\s*$", re.I)
 
 
-def number_or_none(v):
-    m = re.search(r"-?\d+(?:[.,]\d+)?", v or "")
-    return float(m.group(0).replace(",", ".")) if m else None
-
-
 def natural_key(s):
     return [(0, int(t), "") if t.isdigit() else (1, 0, t) for t in re.split(r"(\d+)", normalize_text(s))]
 
@@ -743,12 +737,8 @@ def build(config_path, out_override=None, source_override=None, force=False):
         idx = resolve_column(f.get("column"), headers, "filter column")
         filters.append({"idx": idx, "label": f.get("label") or headers[idx],
                         "multiple": bool(f.get("multiple")), "key": slugify(f.get("label") or headers[idx], "f")})
-    sorts = []
-    for s in cfg.get("sort") or []:
-        s = {"column": s} if isinstance(s, str) else dict(s)
-        idx = resolve_column(s.get("column"), headers, "sort column")
-        sorts.append({"idx": idx, "label": s.get("label") or headers[idx],
-                      "numeric": bool(s.get("numeric")), "desc": bool(s.get("descending"))})
+    if cfg.get("sort"):
+        warn("the 'sort' setting is no longer supported and is ignored")
 
     # Items and their URLs
     items, used = [], set()
@@ -835,9 +825,8 @@ def build(config_path, out_override=None, source_override=None, force=False):
         index_data.append({
             "v": [v[i] if searchable(v[i]) else "" for i in search_cols],
             "f": [split_values(v[f["idx"]], sep if f["multiple"] else "") for f in filters],
-            "o": [number_or_none(v[s["idx"]]) if s["numeric"] else normalize_text(v[s["idx"]]) for s in sorts],
         })
-    widget = catalog_widget(items, filters, sorts, cards, index_data, [headers[i] for i in search_cols])
+    widget = catalog_widget(items, filters, cards, index_data, [headers[i] for i in search_cols])
     ctx = Context(headers, [], dict(globals_, root="", home="index.html", catalog=Raw("\n<!--catalog-widget-->\n")), sep, warned)
     body = render_markdown_template(templates["index.md"], ctx)
     if "<!--catalog-widget-->" in body:
@@ -895,7 +884,7 @@ def pager_html(prev_item, next_item, href):
     return '<nav class="pager">%s</nav>' % "".join(parts)
 
 
-def catalog_widget(items, filters, sorts, cards, index_data, search_labels):
+def catalog_widget(items, filters, cards, index_data, search_labels, visible_chips=12):
     controls = ['<input type="search" class="catalog-search" placeholder="Search %d items..." '
                 'aria-label="Search" data-search>' % len(items)]
     for fi, f in enumerate(filters):
@@ -903,26 +892,32 @@ def catalog_widget(items, filters, sorts, cards, index_data, search_labels):
         for d in index_data:
             for v in d["f"][fi]:
                 counts[v] = counts.get(v, 0) + 1
-        options = "".join('<option value="%s">%s (%d)</option>' % (attr(v), esc(v), counts[v])
-                          for v in sorted(counts, key=natural_key))
+        # Most common values first, so the chips shown before "more" are the useful ones.
+        values = sorted(counts, key=lambda v: (-counts[v], natural_key(v)))
+        chips = ['<button type="button" class="chip chip-all" data-all aria-pressed="true">All</button>']
+        for k, v in enumerate(values):
+            chips.append(
+                '<button type="button" class="chip" data-value="%s" aria-pressed="false"%s>'
+                '%s <span class="chip-count">%d</span></button>' % (
+                    attr(v), " data-extra hidden" if k >= visible_chips else "", esc(v), counts[v]))
+        if len(values) > visible_chips:
+            chips.append('<button type="button" class="chip chip-more" data-more>+%d more</button>'
+                         % (len(values) - visible_chips))
         controls.append(
-            '<label class="catalog-filter"><span>%s</span><select data-filter="%d" data-key="%s">'
-            '<option value="">All</option>%s</select></label>' % (esc(f["label"]), fi, attr(f["key"]), options))
-    if sorts:
-        options = "".join('<option value="%d">%s</option>' % (k, esc(s["label"])) for k, s in enumerate(sorts))
-        controls.append('<label class="catalog-filter"><span>Sort</span><select data-sort>'
-                        '<option value="">Default</option>%s</select></label>' % options)
+            '<div class="catalog-filter" role="group" aria-label="%s" data-filter="%d" data-key="%s">'
+            '<span class="catalog-filter-label">%s</span><div class="chips">%s</div></div>' % (
+                attr(f["label"]), fi, attr(f["key"]), esc(f["label"]), "".join(chips)))
     data_json = json.dumps(index_data, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
-    sort_json = json.dumps([{"numeric": s["numeric"], "desc": s["desc"]} for s in sorts])
     return (
-        '<section class="catalog" data-catalog data-sorts="%s" data-labels="%s">\n'
+        '<section class="catalog" data-catalog data-labels="%s">\n'
         '<div class="catalog-controls">%s</div>\n'
         '<div class="catalog-status"><span data-count>%d items</span>'
         '<button type="button" class="catalog-reset" data-reset hidden>Clear filters</button></div>\n'
         '<div class="catalog-list" data-list>\n%s\n</div>\n'
         '<p class="catalog-empty" data-empty hidden>No items match your search.</p>\n'
         '<script type="application/json" data-catalog-index>%s</script>\n'
-        '</section>' % (attr(sort_json), attr(json.dumps(search_labels, ensure_ascii=False)), "".join(controls), len(items), "\n".join(cards), data_json)
+        '</section>' % (attr(json.dumps(search_labels, ensure_ascii=False)), "".join(controls), len(items),
+                        "\n".join(cards), data_json)
     )
 
 
@@ -1019,13 +1014,23 @@ main.wrap { padding-bottom: 3rem; min-height: 70vh; }
 .site-footer:empty, .site-footer .wrap:empty { display: none; }
 
 /* Overview */
-.catalog-controls { display: flex; flex-wrap: wrap; gap: .75rem; align-items: end; margin: 1.5rem 0 .75rem; }
-.catalog-search { flex: 1 1 260px; font: inherit; padding: .65rem .9rem; border: 1px solid var(--line);
+.catalog-controls { display: flex; flex-direction: column; gap: .9rem; margin: 1.5rem 0 .75rem; }
+.catalog-search { width: 100%; font: inherit; padding: .65rem .9rem; border: 1px solid var(--line);
                   border-radius: 10px; background: var(--surface); color: var(--fg); }
-.catalog-search:focus, .catalog-filter select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
-.catalog-filter { display: flex; flex-direction: column; gap: .2rem; font-size: .8rem; color: var(--muted); }
-.catalog-filter select { font: inherit; font-size: .95rem; padding: .55rem .6rem; border: 1px solid var(--line);
-                         border-radius: 10px; background: var(--surface); color: var(--fg); max-width: 14rem; }
+.catalog-search:focus, .chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.catalog-filter { display: flex; flex-direction: column; gap: .35rem; }
+.catalog-filter-label { font-size: .8rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.chips { display: flex; flex-wrap: wrap; gap: .4rem; }
+.chip { font: inherit; font-size: .9rem; line-height: 1.2; display: inline-flex; align-items: center; gap: .4rem;
+        min-height: 36px; padding: .4rem .85rem; border: 1px solid var(--line); border-radius: 999px;
+        background: var(--surface); color: var(--fg); cursor: pointer; transition: background .12s, border-color .12s; }
+.chip:hover { border-color: var(--accent); }
+.chip-count { font-size: .75rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.chip[aria-pressed="true"] .chip-count { color: inherit; opacity: .8; }
+.chip:disabled { opacity: .4; cursor: default; }
+.chip:disabled:hover { border-color: var(--line); }
+.chip-more { border-style: dashed; color: var(--muted); }
 .catalog-status { display: flex; gap: 1rem; align-items: center; color: var(--muted); font-size: .9rem; margin-bottom: 1rem; }
 .catalog-reset { font: inherit; font-size: .9rem; border: 0; background: none; color: var(--accent); cursor: pointer; padding: 0; }
 .catalog-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 1rem; }
@@ -1161,29 +1166,52 @@ DEFAULT_JS = r"""(function () {
       d.n = d.v.map(norm);
       d.s = d.n.join(" \u0001 ");
     });
-    var sorts = JSON.parse(root.getAttribute("data-sorts") || "[]");
     var list = root.querySelector("[data-list]");
     var cards = Array.prototype.slice.call(list.children);
-    var original = cards.slice();
     var search = root.querySelector("[data-search]");
     var filters = Array.prototype.slice.call(root.querySelectorAll("[data-filter]"));
-    var sortSel = root.querySelector("[data-sort]");
     var countEl = root.querySelector("[data-count]");
     var emptyEl = root.querySelector("[data-empty]");
     var resetEl = root.querySelector("[data-reset]");
     var params = new URLSearchParams(location.search);
     if (search && params.has("q")) search.value = params.get("q");
-    filters.forEach(function (sel) { var k = sel.getAttribute("data-key"); if (params.has(k)) sel.value = params.get(k); });
-    if (sortSel && params.has("sort")) sortSel.value = params.get("sort");
+    // Each filter is a group of chips; several chips in one group mean "any of these",
+    // and different groups must all match.
+    filters.forEach(function (group) {
+      group._index = +group.getAttribute("data-filter");
+      group._chips = Array.prototype.slice.call(group.querySelectorAll("[data-value]"));
+      group._all = group.querySelector("[data-all]");
+      group._more = group.querySelector("[data-more]");
+      var wanted = params.getAll(group.getAttribute("data-key"));
+      group._chips.forEach(function (chip) {
+        if (wanted.indexOf(chip.getAttribute("data-value")) !== -1) chip.setAttribute("aria-pressed", "true");
+      });
+    });
+    function selected(group) {
+      return group._chips.filter(function (c) { return c.getAttribute("aria-pressed") === "true"; })
+        .map(function (c) { return c.getAttribute("data-value"); });
+    }
+    function passes(d, group, values) {
+      return !values.length || values.some(function (v) { return d.f[group._index].indexOf(v) !== -1; });
+    }
 
     function apply() {
       var terms = norm(search ? search.value : "").split(/\s+/).filter(Boolean);
-      var active = filters.filter(function (s) { return s.value !== ""; });
+      var picks = filters.map(selected);
       var shown = 0;
+      var counts = filters.map(function () { return {}; });
       cards.forEach(function (card) {
         var d = data[+card.getAttribute("data-i")];
-        var ok = terms.every(function (t) { return d.s.indexOf(t) !== -1; }) &&
-          active.every(function (s) { return d.f[+s.getAttribute("data-filter")].indexOf(s.value) !== -1; });
+        var textOk = terms.every(function (t) { return d.s.indexOf(t) !== -1; });
+        var groupOk = filters.map(function (g, k) { return passes(d, g, picks[k]); });
+        var ok = textOk && groupOk.every(Boolean);
+        // Chip counts: how many items each chip would give, keeping the search and the other groups.
+        if (textOk) {
+          filters.forEach(function (g, k) {
+            if (!groupOk.every(function (v, j) { return v || j === k; })) return;
+            d.f[g._index].forEach(function (v) { counts[k][v] = (counts[k][v] || 0) + 1; });
+          });
+        }
         card.hidden = !ok;
         unmark(card);
         if (ok) {
@@ -1194,37 +1222,49 @@ DEFAULT_JS = r"""(function () {
           }
         }
       });
-      var order = original.slice();
-      var si = sortSel ? sortSel.value : "";
-      if (si !== "") {
-        var cfg = sorts[+si], k = +si;
-        order.sort(function (a, b) {
-          var va = data[+a.getAttribute("data-i")].o[k], vb = data[+b.getAttribute("data-i")].o[k];
-          var ea = va === null || va === "", eb = vb === null || vb === "";
-          if (ea || eb) return ea === eb ? 0 : ea ? 1 : -1;
-          var r = cfg.numeric ? va - vb : String(va).localeCompare(String(vb), undefined, { numeric: true });
-          return cfg.desc ? -r : r;
+      filters.forEach(function (g, k) {
+        g._all.setAttribute("aria-pressed", picks[k].length ? "false" : "true");
+        g._chips.forEach(function (chip) {
+          var n = counts[k][chip.getAttribute("data-value")] || 0;
+          var on = chip.getAttribute("aria-pressed") === "true";
+          chip.querySelector(".chip-count").textContent = n;
+          chip.disabled = !n && !on;
+          if (on) chip.hidden = false;
         });
-      }
-      order.forEach(function (c) { list.appendChild(c); });
+      });
       countEl.textContent = shown === cards.length ? cards.length + " items" : shown + " of " + cards.length + " items";
       emptyEl.hidden = shown > 0;
-      var filtered = (search && search.value) || active.length || si !== "";
-      resetEl.hidden = !filtered;
+      var anyPick = picks.some(function (v) { return v.length; });
+      resetEl.hidden = !((search && search.value) || anyPick);
       var p = new URLSearchParams();
       if (search && search.value) p.set("q", search.value);
-      active.forEach(function (s) { p.set(s.getAttribute("data-key"), s.value); });
-      if (si !== "") p.set("sort", si);
+      filters.forEach(function (g, k) {
+        picks[k].forEach(function (v) { p.append(g.getAttribute("data-key"), v); });
+      });
       var qs = p.toString();
       history.replaceState(null, "", location.pathname + (qs ? "?" + qs : "") + location.hash);
     }
     if (search) search.addEventListener("input", apply);
-    filters.forEach(function (s) { s.addEventListener("change", apply); });
-    if (sortSel) sortSel.addEventListener("change", apply);
+    function clearGroup(group) {
+      group._chips.forEach(function (c) { c.setAttribute("aria-pressed", "false"); });
+    }
+    filters.forEach(function (group) {
+      group.addEventListener("click", function (e) {
+        var chip = e.target.closest("button");
+        if (!chip || chip.disabled) return;
+        if (chip.hasAttribute("data-more")) {
+          group.querySelectorAll("[data-extra]").forEach(function (c) { c.hidden = false; });
+          chip.hidden = true;
+          return;
+        }
+        if (chip.hasAttribute("data-all")) clearGroup(group);
+        else chip.setAttribute("aria-pressed", chip.getAttribute("aria-pressed") === "true" ? "false" : "true");
+        apply();
+      });
+    });
     resetEl.addEventListener("click", function () {
       if (search) search.value = "";
-      filters.forEach(function (s) { s.value = ""; });
-      if (sortSel) sortSel.value = "";
+      filters.forEach(clearGroup);
       apply();
     });
     apply();
@@ -1249,11 +1289,6 @@ STARTER_CONFIG = {
         {"column": "D", "label": "Genre"},
         {"column": "E", "label": "Tag", "multiple": True},
         {"column": "F", "label": "Language"},
-    ],
-    "sort": [
-        {"column": "A", "label": "Title (A-Z)"},
-        {"column": "C", "label": "Oldest first", "numeric": True},
-        {"column": "C", "label": "Newest first", "numeric": True, "descending": True},
     ],
     "nav": [{"label": "About", "url": "about.html"}],
     "footer": "Generated with [catalog-generator](https://github.com/pauginer/catalog-generator) from a spreadsheet.",
