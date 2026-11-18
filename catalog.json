@@ -9,15 +9,6 @@
     {
       "column": "D",
       "label": "Genre"
-    },
-    {
-      "column": "E",
-      "label": "Tag",
-      "multiple": true
-    },
-    {
-      "column": "F",
-      "label": "Language"
     }
   ],
   "nav": [

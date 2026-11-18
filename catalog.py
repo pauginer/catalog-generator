@@ -1287,8 +1287,6 @@ STARTER_CONFIG = {
     "list_separator": ",",
     "filters": [
         {"column": "D", "label": "Genre"},
-        {"column": "E", "label": "Tag", "multiple": True},
-        {"column": "F", "label": "Language"},
     ],
     "nav": [{"label": "About", "url": "about.html"}],
     "footer": "Generated with [catalog-generator](https://github.com/pauginer/catalog-generator) from a spreadsheet.",
